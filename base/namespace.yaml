@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: release-healthcheck
+  labels:
+    demo: release-healthcheck
+    team: devops-copilot

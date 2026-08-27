@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-service-code
+  namespace: release-healthcheck
+  labels:
+    app: auth-service
+data:
+  startup.py: |
+    # Minimal auth-service boot probe — fails fast when DB endpoint is wrong.
+    import os
+    import socket
+    import sys
+    import time
+
+    HOST = os.environ.get("DATABASE_HOST", "localhost")
+    PORT = int(os.environ.get("DATABASE_PORT", "5432"))
+    DB = os.environ.get("DATABASE_NAME", "authdb")
+
+    print(f"auth-service starting; DATABASE_HOST={HOST} DATABASE_PORT={PORT} DATABASE_NAME={DB}")
+
+    def probe_db() -> None:
+        try:
+            with socket.create_connection((HOST, PORT), timeout=5) as sock:
+                sock.sendall(b"\x00")
+        except ConnectionRefusedError as exc:
+            print(f"ERROR: Database Connection Refused — cannot reach {HOST}:{PORT} ({exc})")
+            sys.exit(1)
+        except OSError as exc:
+            print(f"ERROR: Database Connection Refused — cannot reach {HOST}:{PORT} ({exc})")
+            sys.exit(1)
+
+    probe_db()
+    print(f"auth-service connected to database at {HOST}:{PORT}")
+    # Hold pod up after successful connect (demo baseline).
+    while True:
+        time.sleep(30)
+        probe_db()

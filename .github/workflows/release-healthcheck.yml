@@ -1,0 +1,63 @@
+name: Release healthcheck
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+    inputs:
+      argo_wait_timeout_seconds:
+        description: Max seconds to wait for Argo app health (demo default 300; prod 1800)
+        required: false
+        default: "300"
+
+env:
+  ARGOCD_SERVER: ${{ vars.ARGOCD_SERVER || 'argocd.stackgen.run' }}
+  ARGOCD_APP: release-healthcheck
+  ARGOCD_INSECURE: "true"
+
+jobs:
+  wait-for-argo-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Install argocd CLI
+        run: |
+          curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/download/v2.13.3/argocd-linux-amd64
+          chmod +x argocd
+          sudo mv argocd /usr/local/bin/argocd
+
+      - name: Login to Argo CD
+        env:
+          ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+        run: |
+          if [[ -z "${ARGOCD_AUTH_TOKEN:-}" ]]; then
+            echo "::error::Missing repo secret ARGOCD_AUTH_TOKEN"
+            exit 1
+          fi
+          argocd login "$ARGOCD_SERVER" --grpc-web --insecure --auth-token "$ARGOCD_AUTH_TOKEN"
+
+      - name: Wait for sync + healthy (mirrors release healthcheck stage)
+        env:
+          WAIT_SECONDS: ${{ github.event.inputs.argo_wait_timeout_seconds || vars.ARGO_WAIT_TIMEOUT_SECONDS || '1800' }}
+        run: |
+          set -euo pipefail
+          echo "Waiting up to ${WAIT_SECONDS}s for app ${ARGOCD_APP} to become Synced + Healthy..."
+          deadline=$(( $(date +%s) + WAIT_SECONDS ))
+          last=""
+          while [[ $(date +%s) -lt $deadline ]]; do
+            sync=$(argocd app get "$ARGOCD_APP" -o json | jq -r '.status.sync.status // "Unknown"')
+            health=$(argocd app get "$ARGOCD_APP" -o json | jq -r '.status.health.status // "Unknown"')
+            line="sync=${sync} health=${health}"
+            if [[ "$line" != "$last" ]]; then
+              echo "$line"
+              last="$line"
+            fi
+            if [[ "$sync" == "Synced" && "$health" == "Healthy" ]]; then
+              echo "Release healthcheck passed."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Timed out waiting for Argo CD application ${ARGOCD_APP} to become healthy."
+          echo "The release healthcheck stage failed with a generic timeout — investigate Argo CD sync status and workload health in namespace release-healthcheck."
+          exit 1

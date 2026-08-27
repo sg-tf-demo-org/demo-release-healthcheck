@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: release-healthcheck
+  labels:
+    app: auth-service
+    component: release-healthcheck
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        component: release-healthcheck
+    spec:
+      containers:
+        - name: auth-service
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "/app/startup.py"]
+          envFrom:
+            - configMapRef:
+                name: auth-service-config
+          volumeMounts:
+            - name: app
+              mountPath: /app
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import socket,os; s=socket.create_connection((os.environ['DATABASE_HOST'], int(os.environ['DATABASE_PORT'])), 2); s.close()"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import socket,os; s=socket.create_connection((os.environ['DATABASE_HOST'], int(os.environ['DATABASE_PORT'])), 2); s.close()"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 2
+      volumes:
+        - name: app
+          configMap:
+            name: auth-service-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: release-healthcheck
+  labels:
+    app: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
